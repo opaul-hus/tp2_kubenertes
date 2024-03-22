@@ -1,0 +1,173 @@
+version: '3.8'
+
+services:
+  # ==============================================
+  # Serveur web de la page d'accueil (node)
+  # Fichier : Dockerfile.web
+  # Disponible sur le port
+  #   - 5000 (localhost)
+  #   - 80 (conteneur et networks)
+  # Configurations
+  #   - variables d'environnement pour les ports et services du site web
+  #   - communiquer avec serveurs transactions et users
+  # ==============================================
+  web:
+    container_name: web
+    build:
+      context: ./web
+      dockerfile: Dockerfile.web
+    ports:
+      - 5000:80
+    environment:
+      PORT: 80
+      TRANSACTIONS_URL: http://tsrv:3002/transactions
+      USERS_URL: http://usrv:3001/users
+    networks:
+      - transactions_frontend
+      - users_frontend
+    depends_on:
+      - transactions
+      - users
+    restart: unless-stopped
+
+  # ==============================================
+  # Serveur de users (node)
+  # Fichier : Dockerfile.users
+  # Disponible sur le port
+  #   - 3001 (localhost)
+  #   - 3001 (conteneur et networks)
+  # Configurations
+  #   - variables d'environnement pour la db transactions
+  #   - communiquer avec serveur web et db transactions
+  # ==============================================
+  users:
+    container_name: usrv
+    build:
+      context: ./users
+      dockerfile: Dockerfile.users
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: udb
+      DB_USER: admin
+      DB_PASSWORD: poutine
+      DB_NAME: user_management
+    ports:
+      - 3001:3001
+    networks:
+      - users_frontend
+      - users_backend
+    depends_on:
+      - users-db
+    restart: unless-stopped
+
+  # ==============================================
+  # DB de users (mysql)
+  # Disponible sur le port
+  #   - 3306 (localhost)
+  #   - 3306 (conteneur et networks)
+  # Configurations
+  #   - variables d'environnement pour la db
+  #   - communiquer avec le serveur transactions
+  #   - volume pour la persistance des données
+  #   - initialiser la db avec init.sql
+  # ==============================================
+  users-db:
+    container_name: udb
+    image: mysql:8.3.0
+    environment:
+      MYSQL_ROOT_PASSWORD: pogo
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: poutine
+      MYSQL_DATABASE: user_management
+    ports:
+      - 3306:3306
+    volumes:
+      - ./users-db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - users-db:/var/lib/mysql
+    networks:
+      - users_backend
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ==============================================
+  # Serveur de transactions (node)
+  # Fichier : Dockerfile.web
+  # Disponible sur le port
+  #   - 5002 (localhost)
+  #   - 3002 (conteneur et networks)
+  # Configurations
+  #   - variables d'environnement pour la db transactions
+  #   - communiquer avec serveur web et db transactions
+  # ==============================================
+  transactions:
+    container_name: tsrv
+    build:
+      context: ./transactions
+      dockerfile: Dockerfile.transactions
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      DB_MONGO_URL: mongodb://transaction-db:27017/transactions?authSource=admin
+      DB_USER: master
+      DB_PASSWORD: "123456789"
+    ports:
+      - 3002:3002
+    networks:
+      - transactions_frontend
+      - transactions_backend
+    depends_on:
+      - transaction-db
+    restart: unless-stopped
+
+  # ==============================================
+  # DB de transactions (mongo)
+  # Disponible sur le port
+  #   - 27017 (localhost)
+  #   - 27017 (conteneur et networks)
+  # Configurations
+  #   - variables d'environnement pour la db
+  #   - communiquer avec le serveur transactions
+  #   - volume pour la persistance des données
+  #   - initialiser la db avec init.js
+  # ==============================================
+  transaction-db:
+    container_name: tdb
+    image: mongo:7.0.5
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: master
+      MONGO_INITDB_ROOT_PASSWORD: "123456789"
+      MONGO_INITDB_DATABASE: transactions
+    ports:
+      - 27017:27017
+    networks:
+      - transactions_backend
+    volumes:
+      - ./transactions-db/init.js:/docker-entrypoint-initdb.d/init.js
+      - transactions-db:/data/db
+    healthcheck:
+      test: [ "CMD", "mongo", "--eval", "db.stats()" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+# ==============================================
+# Réseaux pour les services
+# ==============================================
+networks:
+  users_frontend:
+  users_backend:
+  transactions_frontend:
+  transactions_backend:
+
+# ==============================================
+# Volumes pour les services
+# ==============================================
+volumes:
+  users-db:
+  transactions-db:

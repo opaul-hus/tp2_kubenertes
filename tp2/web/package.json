@@ -1,0 +1,10 @@
+{
+    "name": "web-server",
+    "version": "1.0.0",
+    "description": "420-4D4-JR TP01 web server",
+    "main": "web.js",
+    "dependencies": {
+        "express": "^4.17.1",
+        "path": "^0.12.7"
+    }
+}

@@ -1,0 +1,12 @@
+{
+    "name": "users",
+    "version": "1.0.0",
+    "description": "Users Backend",
+    "main": "app.js",
+    "dependencies": {
+        "express": "4.17.1",
+        "body-parser": "1.19.0",
+        "mysql2": "3.9.1",
+        "cors": "2.8.5"
+    }
+}
