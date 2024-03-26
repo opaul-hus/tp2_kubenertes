@@ -3,8 +3,11 @@ kind: ConfigMap
 metadata:
   name: web-config
 data:
-  web-url: web-service
+  web-url: "web-service"
+  PORT: "80"
+
 ---
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,8 +29,15 @@ spec:
         image: tp2-web:latest
         imagePullPolicy: Never
         ports:
-        - containerPort: 3000
+        - containerPort: 80
+        env:
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: web-config
+              key: PORT
 ---
+
 apiVersion: v1
 kind: Service
 metadata:
@@ -38,6 +48,418 @@ spec:
     app: web
   ports:
     - protocol: TCP
-      port: 3000
-      targetPort: 3000
+      port: 80
+      targetPort: 80
       nodePort: 30500
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: users-config
+data:
+  DB_HOST: "users-db-service"
+  DB_NAME: "user_management"
+  DB_PORT: "3001"
+
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: users-secret
+type: Opaque
+data:
+  DB_USER: "cm9vdA==" # echo -n "root" | base64
+  DB_PASSWORD: "MTIzNDU=" # echo -n "12345" | base64
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: users-db-deployment
+  labels:
+    app: users-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: users-db
+  template:
+    metadata:
+      labels:
+        app: users-db
+    spec:
+      containers:
+      - name: users-db
+        image: mysql:latest
+        ports:
+        - containerPort: 3001
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: users-secret
+              key: DB_PASSWORD
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: users-secret
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: users-secret
+              key: DB_PASSWORD
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: users-config
+              key: DB_HOST
+        volumeMounts:
+        - name: users-db-volume
+          mountPath:  /var/lib/mysql
+        - name: users-db-init-volume
+          mountPath: /docker-entrypoint-initdb.d/init.sql
+      volumes:
+      # Binds the container volume to the PersistentVolumeClaim
+      - name: users-db-volume
+        persistentVolumeClaim:
+          claimName: users-db-pvc
+      # Binds the container volume to the ConfigMap contents (init.sql file)
+      - name: users-db-init-volume
+        configMap:
+          name: users-db-init-sql
+
+
+
+---
+
+
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: users-db-pv
+spec:
+  # Total size of the volume in bytes (512Mi = 512 * 1024 * 1024 bytes)
+  capacity:
+    storage: 512Mi 
+
+  # Defines if the volume has a file system or is an empty block of bits with no overhead
+  volumeMode: Filesystem
+    # volumeMode: Block
+
+  # Define the possible actions (read, write) and the number of simultaneous pod claims (one, many)
+  accessModes: 
+    - ReadWriteOnce
+    # - ReadOnlyMany
+    # - ReadWriteMany
+
+  # Keep or delete the volume when the pod is deleted
+  persistentVolumeReclaimPolicy: Retain
+    # persistentVolumeReclaimPolicy: Delete
+
+  # Local path where the volume will be stored
+  # 
+  local:
+    path: c:/volumes/1156001/users
+
+  # Define the storage class to use, will make more sense as we store online
+  # To store locally,set to empty to assign no restriction of which storage to use
+  storageClassName: ""
+
+  # Define which pods can claim the volume for use
+  nodeAffinity: 
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: Exists
+      # - matchExpressions:
+      #   - key: kubernetes.io/hostname
+      #     operator: In
+      #     # List all Nodes labels that need to use the volume
+      #     values:
+      #     - docker-desktop
+
+---
+
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: users-db-pvc
+spec:
+  volumeName: users-db-pv # Binds the PersistentVolumeClaim to the PersistentVolume
+
+  # Must match the capacity of the PersistentVolume or bytes be unused 
+  resources:
+    requests:
+      storage: 512Mi 
+
+  # Must match the accessModes of the PersistentVolume
+  accessModes:
+    - ReadWriteOnce
+
+  # Must match the storageClassName of the PersistentVolume
+  storageClassName: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: users-db-service
+spec:
+  selector:
+    app: users-db
+  type: NodePort
+  ports:
+    - protocol: TCP
+      port: 3001
+      targetPort: 3001
+      nodePort: 30601
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: users-db-init-sql
+data:
+  init.sql: |
+    CREATE DATABASE IF NOT EXISTS user_management;
+    USE user_management;
+
+    CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL,
+    email VARCHAR(100) NOT NULL
+    );
+
+
+    INSERT INTO users (username, email) VALUES
+    ('Alan', 'alan@users.com'),
+    ('Bob', 'bob@users.com'),
+    ('Carl', 'carl@users.com');
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: users-service
+spec:
+  selector:
+    app: users
+  type: NodePort
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+      nodePort: 30600
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: users-deployment
+  labels:
+    app: users
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: users
+  template:
+    metadata:
+      labels:
+        app: users
+    spec:
+      containers:
+      - name: users
+        image: tp2-users:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+        env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: users-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: users-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: users-config
+              key: DB_NAME
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: users-secret
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: users-secret
+              key: DB_PASSWORD
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-config
+data:
+  DB_MONGO_URL: "mongo-service"
+  PORT: "27017"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongo-secret
+type: Opaque
+data:
+  DB_USER: "cm9vdA==" # echo -n "root" | base64
+  DB_PASSWORD: "MTIzNDU=" # echo -n "12345" | base64
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo-deployment
+  labels:
+    app: mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      containers:
+      - name: mongo
+        image: mongo:latest
+        ports:
+        - containerPort: 27017
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mongo-secret
+              key: DB_USER
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongo-secret
+              key: DB_PASSWORD
+      initContainers:
+      - name: init-mongo
+        image: mongo
+        command:
+        - mongo
+        - --eval
+        - |
+          // Connect to MongoDB server
+          const conn = new Mongo();
+          const db = conn.getDB("transactions");
+
+          // Create a transactions collection and insert some initial data
+          db.transactions.insertMany([
+            {
+              description: "Grocery shopping",
+              amount: 45.75
+            },
+            {
+              description: "Restaurant bill",
+              amount: 60.05
+            },
+            {
+              description: "Online purchase",
+              amount: 25.99
+            }
+          ]);
+
+          print("Initialization complete.");
+        
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-service
+spec:
+  selector:
+    app: mongo
+  type: NodePort
+  ports:
+    - protocol: TCP
+      port: 27017
+      targetPort: 27017
+      nodePort: 30701
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcations-deployment
+  labels:
+    app: transcations
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: transcations
+  template:
+    metadata:
+      labels:
+        app: transcations
+    spec:
+      containers:
+      - name: transcations
+        image: tp2-transactions:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+        env:
+        - name: DB_MONGO_URL
+          valueFrom:
+            configMapKeyRef:
+              name: mongo-config
+              key: DB_MONGO_URL
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: mongo-config
+              key: PORT
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: mongo-secret
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongo-secret
+              key: DB_PASSWORD
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transcations-service
+spec:
+  selector:
+    app: transcations
+  type: NodePort
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+      nodePort: 30700
+---
+
+  
